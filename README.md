@@ -9,7 +9,7 @@ Quickstart
 You will need:
  1. A multi-sample VCF
  2. A covariates file with columns you wish to model. (currently the first column
-    of this file must match the sample headings in the VCF.
+    of this file must match the sample headings in the VCF.)
  3. A formula in R (patsy) syntax that will pull from 2. Must contain 'genotype'
     which will be added to the covariates on-the-fly.
 
