@@ -45,9 +45,9 @@ site                | pvalue   | REF/ALT  | OR              | OR\_CI            
 1:258064(rs3091)    | 0.1863   | G/C      | 0.427           | 0.1207..1.5090   |-1.321  | 0.206           | 0.202           | 30
 1:258091(rs3092)    | 0.438    | A/G      | 0.730           | 0.3294..1.6175   |-0.776  | 0.473           | 0.6             | 30
 
-Where the `p_chi_*` columns are the result of running a chisq test under the additive or dominant models
-and `pvalue` is for the specified model under logistic regression. the `OR_CI` is the 95% confidence interval
-for the odds-ratio of genotype.
+Where the `p_chi_*` columns are the result of running a chisq test under the additive or dominant (and now recessive) 
+models. `pvalue` is for the specified model under logistic regression. the `OR_CI` is the 95% confidence interval
+for the odds-ratio of genotype from the model.
 
 The INFO column from the VCF and contingency table for the chisq test are also printed, but not shown here.
 
@@ -74,6 +74,8 @@ to STDERR at the end of the run.
 Further, it will **allow correlated data** via the use of generalized estimating
 equations (**GEE**)'s. Just specify, e.g. `--group` 'family\_id' to indicate the grouping
 and GEE will automatically be used instead of traditional logistic regression.
+
+See: https://github.com/brentp/vcfassoc/blob/master/test/test.sh
 
 `vcfassoc` has been tested against R.
 
