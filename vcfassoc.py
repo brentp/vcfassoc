@@ -94,7 +94,7 @@ def xtab(formula, covariate_df):
     if len(alts) < 2 or not '0_alts' in alts:
         tbl_dom = None
     else:
-        tbl_dom = pd.DataFrame({'0_alts': tbl.ix['0_alts', :], 'n_alts': tbl.ix[list(alts - '0_alts'), :].sum()}).T
+        tbl_dom = pd.DataFrame({'0_alts': tbl.ix['0_alts', :], 'n_alts': tbl.ix[list(alts - set(['0_alts'])), :].sum()}).T
 
     if not '2_alts' in alts or len(alts) < 2:
         tbl_rec = None
