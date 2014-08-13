@@ -74,16 +74,19 @@ def _get_genotypes(vcf, min_qual, min_genotype_qual, min_samples, as_vcf):
         gs = [dict(zip(variant['FORMAT'].split(":"), gt.split(":"))) for gt in
                 genotypes]
 
-        gqs = [tfloat(d['GQ']) for d in gs]
+        gqs = [tfloat(d.get('GQ', 20)) for d in gs]
         gqs = [g if g > min_genotype_qual else np.nan for g in gqs]
         if (~np.isnan(gqs)).sum() < min_samples: continue
         gts = [_get_gt(d['GT']) for d in gs]
-        gts = [g if q > min_genotype_qual else np.nan for g, q in
-            zip(gts, gqs)]
+        gts = [g if q > min_genotype_qual else np.nan for g, q
+                                                      in zip(gts, gqs)]
         yield variant.keys()[9:], gts, gqs, variant
 
-def xtab(X, y):
-    tbl = pd.crosstab(X, y.ravel())
+def xtab(formula, covariate_df):
+    y, X = patsy.dmatrices(str(formula), covariate_df)
+    ix = get_genotype_ix(X)
+
+    tbl = pd.crosstab(X[:, ix], y.ravel())
     tbl.columns = ['%s_%i' % (y.design_info.column_names[-1], j) for j in range(2)]
     tbl.index = ['%i_alts' % i for i in range(0, len(tbl))]
     if tbl.shape[0] == 1:
@@ -91,30 +94,26 @@ def xtab(X, y):
     else:
         tbl2 = pd.DataFrame({'0_alts': tbl.ix[0, :], 'n_alts': tbl.ix[1:, :].sum()}).T
 
-    d = None
     for name, xtbl in (('additive', tbl), ('dominant', tbl2)):
-        try:
-            chi, p, ddof, e = chi2_contingency(xtbl)
-        except:
-            print(tbl)
-            print(tbl2)
-            raise
+        chi, p, ddof, e = chi2_contingency(xtbl)
         if name == 'additive':
             d = xtbl.to_dict()
         d['p.chi.%s' % name] = "%.3g" % p
     return d
 
-
-def vcfassoc(formula, covariate_df, groups=None):
-
-    y, X = patsy.dmatrices(str(formula) + " -1", covariate_df)
-    # get the column containing genotype
+def get_genotype_ix(X):
     ix = [i for i, x in enumerate(X.design_info.column_names) if "genotype" in x]
     #print(X[:10])
     cols = X.design_info.column_names
     assert len(ix) == 1 or ('False' in cols[0] and 'True' in cols[1]), cols
     ix = ix[-1]
-    tbl = xtab(X[:, ix], y)
+    return ix
+
+def vcfassoc(formula, covariate_df, groups=None):
+
+    y, X = patsy.dmatrices(str(formula), covariate_df)
+    # get the column containing genotype
+    ix = get_genotype_ix(X)
 
 
     model = sm.GLM(y, X, missing='drop', family=sm.families.Binomial())
@@ -130,11 +129,9 @@ def vcfassoc(formula, covariate_df, groups=None):
            'OR_CI': tuple(np.exp(result.conf_int()[ix, :])),
            }
     try:
-        res['chisq'] = result.pearson_chi2
         res['df_resid'] = result.df_resid
     except AttributeError:
         pass
-    res['xtab'] = tbl
     return res
 
 def print_result(res, variant, as_vcf, i):
@@ -157,7 +154,7 @@ def print_result(res, variant, as_vcf, i):
     res['p_chi_dominant'] = res['xtab'].pop('p.chi.dominant')
 
 
-    for k in 'chisq', 'z', 'OR':
+    for k in 'z', 'OR':
         if k in res:
             res[k] = "%.3f" % res[k]
     if not as_vcf:
@@ -243,10 +240,14 @@ def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
         except statsmodels.tools.sm_exceptions.PerfectSeparationError:
             print("WARNING: perfect separation, maybe too few samples",
                     file=sys.stderr)
-            print("       : skipping {CHROM}:{POS}".format(**variant),
+            print("       : nanning {CHROM}:{POS}".format(**variant),
                     file=sys.stderr)
+            res['z'] = res['OR'] = res['pvalue'] = np.nan
+            res['OR_CI'] = np.nan, np.nan
+            gmatrix['{CHROM}:{POS}'.format(**variant)] = genos
         except IndexError:
             continue
+        res['xtab'] = xtab(formula, covariate_df)
         print_result(res, variant, as_vcf, i)
 
     l1_regr(pd.DataFrame(gmatrix), covariate_df, formula)
