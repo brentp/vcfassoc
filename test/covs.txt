@@ -1,0 +1,10 @@
+sample_id	family	affected
+1_dad	1	0
+1_mom	1	0
+1_kid	1	1
+2_dad	2	0
+2_mom	2	1
+2_kid	2	1
+3_dad	3	1
+3_mom	3	0
+3_kid	3	1

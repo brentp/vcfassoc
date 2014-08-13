@@ -84,17 +84,28 @@ def _get_genotypes(vcf, min_qual, min_genotype_qual, min_samples, as_vcf):
 
 def xtab(formula, covariate_df):
     y, X = patsy.dmatrices(str(formula), covariate_df)
+    X = patsy.dmatrix('genotype', covariate_df)
     ix = get_genotype_ix(X)
 
     tbl = pd.crosstab(X[:, ix], y.ravel())
     tbl.columns = ['%s_%i' % (y.design_info.column_names[-1], j) for j in range(2)]
-    tbl.index = ['%i_alts' % i for i in range(0, len(tbl))]
-    if tbl.shape[0] == 1:
-        tbl2 = tbl
+    tbl.index = ['%i_alts' % i for i in tbl.index]
+    alts = set(tbl.index)
+    if len(alts) < 2 or not '0_alts' in alts:
+        tbl_dom = None
     else:
-        tbl2 = pd.DataFrame({'0_alts': tbl.ix[0, :], 'n_alts': tbl.ix[1:, :].sum()}).T
+        tbl_dom = pd.DataFrame({'0_alts': tbl.ix['0_alts', :], 'n_alts': tbl.ix[list(alts - '0_alts'), :].sum()}).T
 
-    for name, xtbl in (('additive', tbl), ('dominant', tbl2)):
+    if not '2_alts' in alts or len(alts) < 2:
+        tbl_rec = None
+    else:
+        tbl_rec = pd.DataFrame({'lt2_alts': tbl.ix[['0_alts', '1_alts'], :].sum(), '2_alts': tbl.ix['2_alts', :]})
+
+    for name, xtbl in (('additive', tbl), ('dominant', tbl_dom), ('recessive', tbl_rec)):
+        if xtbl is None:
+            d['p.chi.%s' % name] = 'nan'
+            continue
+
         chi, p, ddof, e = chi2_contingency(xtbl)
         if name == 'additive':
             d = xtbl.to_dict()
@@ -137,7 +148,7 @@ def vcfassoc(formula, covariate_df, groups=None):
 def print_result(res, variant, as_vcf, i):
     """if as_vcf is True, append to the info field
     otherwise, print out tab-delimited info"""
-    fmt = "{site}\t{pvalue}\t{REF/ALT}\t{OR}\t{OR_CI}\t{z}\t{p_chi_additive}\t{p_chi_dominant}"
+    fmt = "{site}\t{pvalue}\t{REF/ALT}\t{OR}\t{OR_CI}\t{z}\t{p_chi_additive}\t{p_chi_dominant}\t{p_chi_recessive}"
     if 'df_resid' in res:
         fmt += "\t{df_resid}"
     fmt += "\t{xtab}\t{INFO}"
@@ -150,8 +161,8 @@ def print_result(res, variant, as_vcf, i):
     res['INFO'] = variant['INFO']
     res['REF/ALT'] = variant['REF'] + "/" + variant['ALT']
     res['OR_CI'] = "%.4f..%.4f" % res['OR_CI']
-    res['p_chi_additive'] = res['xtab'].pop('p.chi.additive')
-    res['p_chi_dominant'] = res['xtab'].pop('p.chi.dominant')
+    for m in 'additive dominant recessive'.split():
+        res['p_chi_%s' % m] = res['xtab'].pop('p.chi.%s' % m)
 
 
     for k in 'z', 'OR':
@@ -193,7 +204,7 @@ The default is to output a tab-delimited table with 1 row per variable
 with only the regression information. But, the regression values can be
 added to the [vcf] with --as-vcf.
        """)
-@click.argument('vcf', type=click.Path(exists=True))
+@click.argument('vcf', type=str)
 @click.argument('covariates', type=click.Path(exists=True))
 @click.argument('formula', type=str)
 @click.option('--min-qual', default=1, help="skip variants with QUAL < this",

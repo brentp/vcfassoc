@@ -16,14 +16,19 @@ You will need:
 Example run with **additive** model:
 
 ```Bash
-vcfassoc.py samples.vcf covariates.txt 'status ~ genotype + age + gender + PC1'
+vcfassoc.py samples.vcf covariates.txt 'status ~ genotype + age + gender + PC1 + PC2'
 ```
-
 
 Example run with **dominant** model:
 
 ```Bash
-vcfassoc.py samples.vcf covariates.txt 'status ~ I(genotype > 0) + age + gender + PC1'
+vcfassoc.py samples.vcf covariates.txt 'status ~ I(genotype > 0) + age + gender + PC1 + PC2'
+```
+
+Example run with **recessive** model:
+
+```Bash
+vcfassoc.py samples.vcf covariates.txt 'status ~ I(genotype == 2) + age + gender + PC1 + PC2'
 ```
 
 The output will look like:
