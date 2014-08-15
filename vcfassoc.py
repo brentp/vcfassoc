@@ -249,11 +249,11 @@ def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
         except np.linalg.linalg.LinAlgError:
             continue
         except statsmodels.tools.sm_exceptions.PerfectSeparationError:
-            print("WARNING: perfect separation, maybe too few samples",
-                    file=sys.stderr)
-            print("       : nanning {CHROM}:{POS}".format(**variant),
-                    file=sys.stderr)
-            res['z'] = res['OR'] = res['pvalue'] = np.nan
+            print("WARNING: perfect separation, too few samples(?)",
+                  ": setting to -9: {CHROM}:{POS}".format(**variant),
+                  file=sys.stderr)
+            res['z'] = res['OR'] = np.nan
+            res['pvalue'] = -9.0 # blech.
             res['OR_CI'] = np.nan, np.nan
             gmatrix['{CHROM}:{POS}'.format(**variant)] = genos
         except IndexError:
@@ -278,6 +278,8 @@ def l1_regr(genotypes, covariate_df, formula, C=0.1):
     covariates.drop([x for x in covariates.columns if 'genotype' in x], inplace=True, axis=1)
     covariates.ix[:, :] = StandardScaler().fit_transform(covariates)
     X = pd.concat((covariates, genotypes), axis=1)
+    #X.to_csv('/tmp/X.csv')
+    #y.to_csv('/tmp/y.csv')
 
     assert X.shape[0] == covariate_df.shape[0]
     # or drop variants with missing data.
@@ -285,7 +287,7 @@ def l1_regr(genotypes, covariate_df, formula, C=0.1):
     tol, do_break = 1e-4, True
     for p in ('l1', 'l2'):
         for c in (1e-3, 0.01, 0.1, 0.25, 0.5, 1, 2, 10, 1000, 1e8):
-            clf = LogisticRegression(C=C, penalty=p, tol=tol,
+            clf = LogisticRegression(C=c, penalty=p, tol=tol,
                         fit_intercept=False)
             try:
                 clf.fit_transform(X, y.squeeze())
