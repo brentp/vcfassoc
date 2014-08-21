@@ -60,7 +60,9 @@ def _get_genotypes(vcf, min_qual, min_genotype_qual, min_samples, as_vcf):
                             header="ordered")
 
     for i, variant in enumerate(vcf_iter):
-        if float(variant['QUAL']) < min_qual: continue
+        if float(variant['QUAL']) < min_qual:
+            yield (None, None, None, variant)
+            continue
         genotypes = variant.values()[9:]
 
         # it was a fraction
@@ -70,13 +72,16 @@ def _get_genotypes(vcf, min_qual, min_genotype_qual, min_samples, as_vcf):
         # too few samples with data.
         if len(genotypes) - sum(gt.startswith('./.') or gt == "." or all ("." == v for v in
             gt.split(":")) for gt in genotypes) < min_samples:
+            yield (None, None, None, variant)
             continue
         gs = [dict(zip(variant['FORMAT'].split(":"), gt.split(":"))) for gt in
                 genotypes]
 
         gqs = [tfloat(d.get('GQ', 20)) for d in gs]
         gqs = [g if g > min_genotype_qual else np.nan for g in gqs]
-        if (~np.isnan(gqs)).sum() < min_samples: continue
+        if (~np.isnan(gqs)).sum() < min_samples:
+            yield (None, None, None, variant)
+            continue
         gts = [_get_gt(d['GT']) for d in gs]
         gts = [g if q > min_genotype_qual else np.nan for g, q
                                                       in zip(gts, gqs)]
@@ -96,6 +101,7 @@ def xtab(formula, covariate_df):
     else:
         tbl_dom = pd.DataFrame({'0_alts': tbl.ix['0_alts', :], 'n_alts': tbl.ix[list(alts - set(['0_alts'])), :].sum()}).T
 
+    # can't test recessive without any homoz alts.
     if not '2_alts' in alts or len(alts) < 2:
         tbl_rec = None
     else:
@@ -162,7 +168,10 @@ def print_result(res, variant, as_vcf, i):
     res['REF/ALT'] = variant['REF'] + "/" + variant['ALT']
     res['OR_CI'] = "%.4f..%.4f" % res['OR_CI']
     for m in 'additive dominant recessive'.split():
-        res['p_chi_%s' % m] = res['xtab'].pop('p.chi.%s' % m)
+        if isinstance(res['xtab'], dict):
+            res['p_chi_%s' % m] = res['xtab'].pop('p.chi.%s' % m)
+        else:
+            res['p_chi_%s' % m] = 'nan'
 
 
     for k in 'z', 'OR':
@@ -217,12 +226,15 @@ added to the [vcf] with --as-vcf.
 #        default='FALSE')
 @click.option('--as-vcf', is_flag=True, help="output the entire VCF with model stuff"
         "added to the INFO field instead of default of writing a table of results")
+@click.option('--exclude-nan', is_flag=True, help="by default, all variants "
+        "will be output, even those that are not tested due to numbers or "
+        "quality. If this flag is specified, only tested variants are printed.")
 @click.option('--groups', help="a grouping column in `covariates` used in "
         "fitting a GEE with exchangeable correlation. Useful for families or "
         "paired samples. "
         "(see http://www.ncbi.nlm.nih.gov/pmc/articles/PMC3736986/)")
 def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
-        weighted=False, as_vcf=False, groups=None):
+        weighted=False, as_vcf=False, exclude_nan=False, groups=None):
     #if weighted == "FALSE": weighted = False
     #else:
     #    weight_fn = {'log10': np.log10, 'log': np.log, 'GQ': np.array}[weighted]
@@ -232,33 +244,39 @@ def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
         covariate_df = pd.read_table(covariates, index_col=0)
     covariate_df.index = [str(x) for x in covariate_df.index]
     gmatrix = {}
+
     for i, (samples, genos, quals, variant) in enumerate(
             _get_genotypes(vcf, min_qual, min_genotype_qual, min_samples,
                            as_vcf)):
-        if i == 0:
+        if i == 0 and not samples is None:
             # make sure we have covariates for all samples in the vcf
             assert not set(samples).difference(covariate_df.index),\
                         set(samples).difference(covariate_df.index)
             covariate_df = covariate_df.ix[samples,:]
         covariate_df['genotype'] = genos
-        #if weighted:
-        #    covariate_df['weights'] = weight_fn(quals)
-        try:
-            res = vcfassoc(formula, covariate_df, groups)
-            gmatrix['{CHROM}:{POS}'.format(**variant)] = genos
-        except np.linalg.linalg.LinAlgError:
-            continue
-        except statsmodels.tools.sm_exceptions.PerfectSeparationError:
-            print("WARNING: perfect separation, too few samples(?)",
-                  ": setting to -9: {CHROM}:{POS}".format(**variant),
-                  file=sys.stderr)
-            res['z'] = res['OR'] = np.nan
-            res['pvalue'] = -9.0 # blech.
-            res['OR_CI'] = np.nan, np.nan
-            gmatrix['{CHROM}:{POS}'.format(**variant)] = genos
-        except IndexError:
-            continue
-        res['xtab'] = xtab(formula, covariate_df)
+
+        if samples is None:
+            if exclude_nan: continue
+            res = {'OR': np.nan, 'pvalue': np.nan, 'z': np.nan, 'OR_CI':
+                    (np.nan, np.nan), 'xtab': 'NA'}
+        else:
+            try:
+                res = vcfassoc(formula, covariate_df, groups)
+                gmatrix['{CHROM}:{POS}'.format(**variant)] = genos
+            except np.linalg.linalg.LinAlgError:
+                res = {'OR': np.nan, 'pvalue': np.nan, 'z': np.nan, 'OR_CI':
+                        (np.nan, np.nan)}
+            except statsmodels.tools.sm_exceptions.PerfectSeparationError:
+                print("WARNING: perfect separation, too few samples(?)",
+                      ": setting to -9: {CHROM}:{POS}".format(**variant),
+                      file=sys.stderr)
+                res['z'] = res['OR'] = np.nan
+                res['pvalue'] = -9.0 # blech.
+                res['OR_CI'] = np.nan, np.nan
+                gmatrix['{CHROM}:{POS}'.format(**variant)] = genos
+            except IndexError:
+                continue
+            res['xtab'] = xtab(formula, covariate_df)
         print_result(res, variant, as_vcf, i)
 
     l1_regr(pd.DataFrame(gmatrix), covariate_df, formula)

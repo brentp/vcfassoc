@@ -85,5 +85,4 @@ TODO
  + option to output genotype matrix.
  + allow continuous dependent variable
  + parallelization (naive version didn't improve speed much)
- + output all variants (currently those that have linalgError are skipped)
  + weighted regression by genotype qualities
