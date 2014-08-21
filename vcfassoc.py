@@ -12,6 +12,7 @@ import statsmodels
 import statsmodels.api as sm
 from statsmodels.genmod.dependence_structures import Exchangeable
 from scipy.stats import chi2_contingency
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import patsy
@@ -60,32 +61,33 @@ def _get_genotypes(vcf, min_qual, min_genotype_qual, min_samples, as_vcf):
                             header="ordered")
 
     for i, variant in enumerate(vcf_iter):
-        if float(variant['QUAL']) < min_qual:
-            yield (None, None, None, variant)
-            continue
-        genotypes = variant.values()[9:]
+        yield _get_genotype(i, variant, min_qual, min_genotype_qual,
+                min_samples)
 
-        # it was a fraction
-        if i == 0 and min_samples < 1:
-            min_samples *= len(genotypes)
+def _get_genotype(i, variant, min_qual, min_genotype_qual, min_samples):
+    if float(variant['QUAL']) < min_qual:
+        return (None, None, None, variant)
+    genotypes = variant.values()[9:]
 
-        # too few samples with data.
-        if len(genotypes) - sum(gt.startswith('./.') or gt == "." or all ("." == v for v in
-            gt.split(":")) for gt in genotypes) < min_samples:
-            yield (None, None, None, variant)
-            continue
-        gs = [dict(zip(variant['FORMAT'].split(":"), gt.split(":"))) for gt in
-                genotypes]
+    # it was a fraction
+    if i == 0 and min_samples < 1:
+        min_samples *= len(genotypes)
 
-        gqs = [tfloat(d.get('GQ', 20)) for d in gs]
-        gqs = [g if g > min_genotype_qual else np.nan for g in gqs]
-        if (~np.isnan(gqs)).sum() < min_samples:
-            yield (None, None, None, variant)
-            continue
-        gts = [_get_gt(d['GT']) for d in gs]
-        gts = [g if q > min_genotype_qual else np.nan for g, q
-                                                      in zip(gts, gqs)]
-        yield variant.keys()[9:], gts, gqs, variant
+    # too few samples with data.
+    if len(genotypes) - sum(gt.startswith('./.') or gt == "." or all ("." == v for v in
+        gt.split(":")) for gt in genotypes) < min_samples:
+        return (None, None, None, variant)
+    gs = [dict(zip(variant['FORMAT'].split(":"), gt.split(":"))) for gt in
+            genotypes]
+
+    gqs = [tfloat(d.get('GQ', 20)) for d in gs]
+    gqs = [g if g > min_genotype_qual else np.nan for g in gqs]
+    if (~np.isnan(gqs)).sum() < min_samples:
+        return (None, None, None, variant)
+    gts = [_get_gt(d['GT']) for d in gs]
+    gts = [g if q > min_genotype_qual else np.nan for g, q
+                                                  in zip(gts, gqs)]
+    return variant.keys()[9:], gts, gqs, variant
 
 def xtab(formula, covariate_df):
     y, X = patsy.dmatrices(str(formula), covariate_df)
@@ -245,6 +247,8 @@ def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
     covariate_df.index = [str(x) for x in covariate_df.index]
     gmatrix = {}
 
+    po = ProcessPoolExecutor(1)
+
     for i, (samples, genos, quals, variant) in enumerate(
             _get_genotypes(vcf, min_qual, min_genotype_qual, min_samples,
                            as_vcf)):
@@ -260,6 +264,7 @@ def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
             res = {'OR': np.nan, 'pvalue': np.nan, 'z': np.nan, 'OR_CI':
                     (np.nan, np.nan), 'xtab': 'NA'}
         else:
+            xtab_future = po.submit(xtab, formula, covariate_df)
             try:
                 res = vcfassoc(formula, covariate_df, groups)
                 gmatrix['{CHROM}:{POS}'.format(**variant)] = genos
@@ -276,10 +281,11 @@ def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
                 gmatrix['{CHROM}:{POS}'.format(**variant)] = genos
             except IndexError:
                 continue
-            res['xtab'] = xtab(formula, covariate_df)
+            res['xtab'] = xtab_future.result()
         print_result(res, variant, as_vcf, i)
 
     l1_regr(pd.DataFrame(gmatrix), covariate_df, formula)
+    po.shutdown()
 
 def l1_regr(genotypes, covariate_df, formula, C=0.1):
     from sklearn.linear_model import LogisticRegression

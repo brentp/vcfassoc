@@ -64,6 +64,8 @@ For users who do not have the scientific python stack set up, it is recommended
 to download and install [anaconda](https://store.continuum.io/cshop/anaconda/),
 a free distribution that contains most of these modules.
 
+You will also need to install [futures](https://pypi.python.org/pypi/futures).
+
 Features
 ========
 
