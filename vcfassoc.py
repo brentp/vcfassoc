@@ -10,9 +10,12 @@ import toolshed as ts
 import pandas as pd
 import statsmodels
 import statsmodels.api as sm
-from statsmodels.genmod.dependence_structures import Exchangeable
+from statsmodels.genmod.cov_struct import Exchangeable
 from scipy.stats import chi2_contingency
 from concurrent.futures import ProcessPoolExecutor
+from statsmodels.formula.api import gls
+from sklearn.covariance import shrunk_covariance
+
 
 import numpy as np
 import patsy
@@ -95,7 +98,10 @@ def xtab(formula, covariate_df):
     ix = get_genotype_ix(X)
 
     tbl = pd.crosstab(X[:, ix], y.ravel())
-    tbl.columns = ['%s_%i' % (y.design_info.column_names[-1], j) for j in range(2)]
+    try:
+        tbl.columns = ['%s_%i' % (y.design_info.column_names[-1], j) for j in range(2)]
+    except:
+        return None # too few samples
     tbl.index = ['%i_alts' % i for i in tbl.index]
     alts = set(tbl.index)
     if len(alts) < 2 or not '0_alts' in alts:
@@ -130,28 +136,55 @@ def get_genotype_ix(X):
 
 def vcfassoc(formula, covariate_df, groups=None):
 
-    y, X = patsy.dmatrices(str(formula), covariate_df)
+    y, X = patsy.dmatrices(str(formula), covariate_df, return_type='dataframe')
     # get the column containing genotype
     ix = get_genotype_ix(X)
+    Binomial = sm.families.Binomial
+    logit = sm.families.links.Logit()
 
-
-    model = sm.GLM(y, X, missing='drop', family=sm.families.Binomial())
-    if groups:
+    if groups is not None:
         #covariate_df['grps'] = map(str, range(len(covariate_df) / 8)) * 8
-        cov = Exchangeable()
-        model = sm.GEE(y, X, groups=covariate_df[groups], cov_struct=cov,
-                    family=sm.families.Binomial())
+        if not isinstance(groups, (pd.DataFrame, np.ndarray)):
+            cov = Exchangeable()
+            model = sm.GEE(y, X, groups=covariate_df[groups], cov_struct=cov,
+                    family=Binomial())
+        else:
+            model = sm.GLS(logit(y), X, sigma=groups.ix[X.index, X.index])
+    else:
+        model = sm.GLM(y, X, missing='drop', family=Binomial())
+
     result = model.fit(maxiter=1000)
     res = {'OR': np.exp(result.params[ix]),
            'pvalue': result.pvalues[ix],
            'z': result.tvalues[ix],
-           'OR_CI': tuple(np.exp(result.conf_int()[ix, :])),
+           'OR_CI': tuple(np.exp(result.conf_int().ix[ix, :])),
            }
     try:
         res['df_resid'] = result.df_resid
     except AttributeError:
         pass
     return res
+
+def get_covariance(var_iter, shrinkage=0.1):
+        cov = []
+        for (samples, genos, quals, variant) in var_iter:
+            if genos is None: continue
+            if any(np.isnan(genos)): continue
+            if len(np.unique(genos)) == 1: continue
+            cov.append(genos)
+        cov = np.cov(np.array(cov, dtype='f').T)
+        cov[np.diag_indices_from(cov)] = 1
+        from sklearn import covariance
+        # shrunk
+        cov = covariance.shrunk_covariance(cov, shrinkage=shrinkage)
+        #cov, _ = covariance.ledoit_wolf(cov)
+        #cov, _ = covariance.oas(cov)
+        # robust:
+        try:
+            cov = covariance.MinCovDet().fit(cov).covariance_
+        except ValueError:
+            pass
+        return cov
 
 def print_result(res, variant, as_vcf, i):
     """if as_vcf is True, append to the info field
@@ -234,7 +267,10 @@ added to the [vcf] with --as-vcf.
 @click.option('--groups', help="a grouping column in `covariates` used in "
         "fitting a GEE with exchangeable correlation. Useful for families or "
         "paired samples. "
-        "(see http://www.ncbi.nlm.nih.gov/pmc/articles/PMC3736986/)")
+        "(see http://www.ncbi.nlm.nih.gov/pmc/articles/PMC3736986/)"
+        "If this is 'covariance', then Generalized Least Squares is used with "
+        " a robust, shrunken (Ledoit Wolf) estimate of covariance derived from "
+        " the entire dataset. ")
 def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
         weighted=False, as_vcf=False, exclude_nan=False, groups=None):
     #if weighted == "FALSE": weighted = False
@@ -246,6 +282,16 @@ def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
         covariate_df = pd.read_table(covariates, index_col=0)
     covariate_df.index = [str(x) for x in covariate_df.index]
     gmatrix = {}
+
+    if groups == 'covariance':
+        assert op.isfile(vcf), ('need to iterate over vcf 2x')
+        cov = get_covariance(_get_genotypes(vcf, min_qual,
+                                min_genotype_qual, min_samples, as_vcf))
+        groups = pd.DataFrame(cov, index=covariate_df.index,
+                columns=covariate_df.index)
+        print(groups)
+        # NOTE: currently using GLS and a covariance matrix but we assume
+        # a binary dependent variable so estimates are off.
 
     po = ProcessPoolExecutor(1)
 
@@ -282,6 +328,7 @@ def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
             except IndexError:
                 continue
             res['xtab'] = xtab_future.result()
+            #res['xtab'] = xtab(formula, covariate_df)
         print_result(res, variant, as_vcf, i)
 
     l1_regr(pd.DataFrame(gmatrix), covariate_df, formula)
