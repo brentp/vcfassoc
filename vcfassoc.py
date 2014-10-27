@@ -43,6 +43,12 @@ def _get_gt(gt, splitter = re.compile("/|\|")):
     return sum(min(int(n), 1) for n in splitter.split(gt))
 
 def tfloat(n):
+    """
+    >>> tfloat(2)
+    2.0
+    >>> tfloat('asdf')
+    nan
+    """
     try: return float(n)
     except ValueError: return np.nan
 
