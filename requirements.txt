@@ -1,0 +1,8 @@
+futures
+click
+toolshed
+numpy
+scipy
+patsy
+statsmodels>=0.6
+scikit-learn
