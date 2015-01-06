@@ -13,9 +13,7 @@ import statsmodels.api as sm
 from statsmodels.genmod.cov_struct import Exchangeable
 from scipy.stats import chi2_contingency
 from concurrent.futures import ProcessPoolExecutor
-from statsmodels.formula.api import gls
-from sklearn.covariance import shrunk_covariance
-
+from sklearn import covariance
 
 import numpy as np
 import patsy
@@ -121,9 +119,11 @@ def xtab(formula, covariate_df):
     else:
         tbl_rec = pd.DataFrame({'lt2_alts': tbl.ix[['0_alts', '1_alts'], :].sum(), '2_alts': tbl.ix['2_alts', :]})
 
+    d = {}
     for name, xtbl in (('additive', tbl), ('dominant', tbl_dom), ('recessive', tbl_rec)):
         if xtbl is None:
-            d['p.chi.%s' % name] = 'nan'
+            
+            d['p.chi.%s' % name] =  'nan'
             continue
 
         chi, p, ddof, e = chi2_contingency(xtbl)
@@ -180,7 +180,6 @@ def get_covariance(var_iter, shrinkage=0.1):
             cov.append(genos)
         cov = np.cov(np.array(cov, dtype='f').T)
         cov[np.diag_indices_from(cov)] = 1
-        from sklearn import covariance
         # shrunk
         cov = covariance.shrunk_covariance(cov, shrinkage=shrinkage)
         #cov, _ = covariance.ledoit_wolf(cov)
