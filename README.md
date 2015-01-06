@@ -6,6 +6,8 @@ perform phenotype::genotype-association tests on a VCF with logistic regression.
 Quickstart
 ==========
 
+(also see Installation)
+
 You will need:
  1. A multi-sample VCF
  2. A covariates file with columns you wish to model. (currently the first column
@@ -59,6 +61,10 @@ Installation
 
 `vcfassoc` requires a number of python modules: numpy, scipy, statsmodels, toolshed,
 	patsy, click, scikit-learn
+
+All dependencies can be installed with pip via:
+
+    pip install -r requirements.txt
 
 For users who do not have the scientific python stack set up, it is recommended
 to download and install [anaconda](https://store.continuum.io/cshop/anaconda/),
