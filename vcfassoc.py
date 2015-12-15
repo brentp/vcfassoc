@@ -37,7 +37,7 @@ def _get_gt(gt, splitter = re.compile("/|\|")):
     >>> _get_gt(".")
     nan
     """
-    if gt == ".": return np.nan
+    if gt[0] == "." or gt[-1] == ".": return np.nan
     return sum(min(int(n), 1) for n in splitter.split(gt))
 
 def tfloat(n):
@@ -72,8 +72,12 @@ def _get_genotypes(vcf, min_qual, min_genotype_qual, min_samples, as_vcf):
                 min_samples)
 
 def _get_genotype(i, variant, min_qual, min_genotype_qual, min_samples):
-    if float(variant['QUAL']) < min_qual:
-        return (None, None, None, variant)
+    try:
+        if float(variant['QUAL']) < min_qual:
+            return (None, None, None, variant)
+    except KeyError:
+        print(variant)
+        raise
     genotypes = variant.values()[9:]
 
     # it was a fraction
@@ -81,8 +85,8 @@ def _get_genotype(i, variant, min_qual, min_genotype_qual, min_samples):
         min_samples *= len(genotypes)
 
     # too few samples with data.
-    if len(genotypes) - sum(gt.startswith('./.') or gt == "." or all ("." == v for v in
-        gt.split(":")) for gt in genotypes) < min_samples:
+    if len(genotypes) - sum(gt.startswith('./.') or gt[0] == "." or all ("." ==
+        v[0] for v in gt.split(":")) for gt in genotypes) < min_samples:
         return (None, None, None, variant)
     gs = [dict(zip(variant['FORMAT'].split(":"), gt.split(":"))) for gt in
             genotypes]
@@ -122,7 +126,7 @@ def xtab(formula, covariate_df):
     d = {}
     for name, xtbl in (('additive', tbl), ('dominant', tbl_dom), ('recessive', tbl_rec)):
         if xtbl is None:
-            
+
             d['p.chi.%s' % name] =  'nan'
             continue
 
@@ -191,15 +195,16 @@ def get_covariance(var_iter, shrinkage=0.1):
             pass
         return cov
 
-def print_result(res, variant, as_vcf, i):
+def print_result(res, variant, as_vcf, i, header=[False]):
     """if as_vcf is True, append to the info field
     otherwise, print out tab-delimited info"""
     fmt = "{site}\t{pvalue}\t{REF/ALT}\t{OR}\t{OR_CI}\t{z}\t{p_chi_additive}\t{p_chi_dominant}\t{p_chi_recessive}"
     if 'df_resid' in res:
         fmt += "\t{df_resid}"
     fmt += "\t{xtab}\t{INFO}"
-    if i == 0 and not as_vcf:
+    if (not header[0] or i == 0) and not as_vcf:
         print(fmt.replace("}", "").replace("{", ""))
+        header[0] = True
     res['site'] = "{CHROM}:{POS}".format(**variant)
     if not variant["ID"] in (".", ""):
         res['site'] += "(%s)" % variant['ID']
@@ -326,6 +331,7 @@ def main(vcf, covariates, formula, min_qual, min_genotype_qual, min_samples,
                 print("WARNING: perfect separation, too few samples(?)",
                       ": setting to -9: {CHROM}:{POS}".format(**variant),
                       file=sys.stderr)
+                res = {}
                 res['z'] = res['OR'] = np.nan
                 res['pvalue'] = -9.0 # blech.
                 res['OR_CI'] = np.nan, np.nan
@@ -348,8 +354,11 @@ def l1_regr(genotypes, covariate_df, formula, C=0.1):
     genotypes.ix[:, :] = Imputer(missing_values="NaN",
                                  strategy="most_frequent",
                                  axis=0).fit_transform(genotypes)
-    y, covariates = patsy.dmatrices(str(formula), covariate_df,
-            return_type='dataframe')
+    try:
+        y, covariates = patsy.dmatrices(str(formula), covariate_df,
+                return_type='dataframe')
+    except:
+        return
 
     covariates.drop([x for x in covariates.columns if 'genotype' in x], inplace=True, axis=1)
     covariates.ix[:, :] = StandardScaler().fit_transform(covariates)
